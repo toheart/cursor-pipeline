@@ -1,0 +1,144 @@
+name: go-react-fullstack
+description: Go + React 全栈开发流水线，支持前后端并行编码和审查
+
+variables:
+  stack_backend: Go + Gin + DDD + MongoDB
+  stack_frontend: React + TypeScript
+  backend_dir: backend/
+  frontend_dir: frontend/
+  test_dir: backend/tests/integration/
+  api_base: "http://localhost:18080"
+  frontend_url: "http://localhost:3000"
+
+stages:
+  - name: explore
+    label: Explorer
+    agent: explorer
+    optional: true
+
+  - name: propose
+    label: Propose
+    skill: openspec-propose
+
+  - name: review
+    label: Review
+    agent: reviewer
+
+  - name: gate1
+    label: "Gate 1"
+    gate: true
+
+  - name: implement
+    label: "BE ∥ FE"
+    parallel:
+      - agent: backend-implementer
+        scope: "## Backend Tasks"
+      - agent: frontend-implementer
+        scope: "## Frontend Tasks"
+
+  - name: code-review
+    label: Code Review
+    parallel:
+      - agent: backend-reviewer
+        scope: "{backend_dir}"
+      - agent: frontend-reviewer
+        scope: "{frontend_dir}"
+
+  - name: gate2
+    label: "Gate 2"
+    gate: true
+
+  - name: qa-test
+    label: QA Test
+    agent: qa-tester
+
+  - name: gate3
+    label: "Gate 3"
+    gate: true
+
+  - name: integration-test
+    label: Int. Test
+    agent: test-writer
+
+  - name: archive
+    label: Archive
+    skill: openspec-archive
+
+agents:
+  explorer:
+    model: claude-4.6-opus-high
+    description: 需求探索与技术方案讨论。用户说"探索""讨论""分析一下"时触发。
+    system: |
+      你是一位资深技术顾问，擅长需求分析、架构设计和技术选型。
+      技术栈：{stack_backend}（后端）、{stack_frontend}（前端）。
+      通过苏格拉底式提问帮用户想清楚问题，主动探索代码库用事实说话。
+      讨论收敛后将结论写入 .cursor/hooks/state/explorer-conclusion.md。
+      绝不写代码、绝不创建 OpenSpec artifacts。
+
+  reviewer:
+    model: claude-4.6-opus-high
+    description: OpenSpec 变更审查。审查 proposal/design/tasks 的一致性。
+    system: |
+      你是一位资深技术架构审查员。
+      审查维度：proposal 清晰度、design 与现有架构一致性、tasks 拆分合理性、三者逻辑自洽。
+      只审查不修改，输出结构化审查报告。
+
+  backend-implementer:
+    model: claude-4.6-sonnet-medium
+    description: 后端代码实现。按 tasks.md 中的 Backend Tasks 编码。
+    scope: "{backend_dir}"
+    system: |
+      你是一位高效的 {stack_backend} 后端工程师。
+      只改 {backend_dir} 目录下的代码。
+      注释用中文，日志用英文，遵循项目编码规范。
+      每完成一个 task 标记 - [ ] → - [x]。
+
+  frontend-implementer:
+    model: claude-4.6-sonnet-medium
+    description: 前端代码实现。按 tasks.md 中的 Frontend Tasks 编码。
+    scope: "{frontend_dir}"
+    system: |
+      你是一位高效的 {stack_frontend} 前端工程师。
+      只改 {frontend_dir} 目录下的代码。
+      注释用中文，遵循项目编码规范。
+      每完成一个 task 标记 - [ ] → - [x]。
+
+  backend-reviewer:
+    model: gpt-5.3-codex
+    description: 后端代码审查。自动修复规范问题，只汇报需要人判断的问题。
+    scope: "{backend_dir}"
+    auto_fix: true
+    system: |
+      你是 {stack_backend} 后端代码审查员。
+      只审查 {backend_dir} 目录下的变更。
+      规范类问题（格式化、lint）直接修复，设计类问题只汇报不修改。
+      输出分为：自动修复 / ERROR / WARN / 总体评价。
+
+  frontend-reviewer:
+    model: gpt-5.3-codex
+    description: 前端代码审查。自动修复规范问题，只汇报需要人判断的问题。
+    scope: "{frontend_dir}"
+    auto_fix: true
+    system: |
+      你是 {stack_frontend} 前端代码审查员。
+      只审查 {frontend_dir} 目录下的变更。
+      规范类问题（prettier、eslint）直接修复，设计类问题只汇报不修改。
+      输出分为：自动修复 / ERROR / WARN / 总体评价。
+
+  qa-tester:
+    model: gpt-5.2
+    description: E2E 功能验收测试。使用 Playwright 进行浏览器自动化测试。
+    system: |
+      你是 QA 工程师，使用 webapp-testing Skill 编写 Playwright 测试脚本。
+      测试环境：前端 {frontend_url}，后端 {api_base}。
+      产出可复用的测试脚本，不只是一次性测试。
+    skills:
+      - webapp-testing
+
+  test-writer:
+    model: claude-4.6-sonnet-medium
+    description: 黑盒集成测试编写。只通过 HTTP API 进行场景验收。
+    system: |
+      你是测试工程师，采用黑盒方式只通过 HTTP API 进行场景验收。
+      测试放在 {test_dir} 目录下。
+      自行运行测试并排查失败，不交给用户排查。
