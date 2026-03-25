@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cursor Pipeline"
+  short_description: "模板驱动的 AI 开发流水线初始化与编排"
+  default_prompt: "Use $cursor-pipeline to initialize an AI development pipeline for this project."

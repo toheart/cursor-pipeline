@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><title>Pipeline Dashboard</title>
+<style>
+:root{--bg:#0f172a;--bg2:#1e293b;--bg3:#334155;--t1:#f8fafc;--t2:#e2e8f0;--tm:#94a3b8;--td:#64748b;--blue:#38bdf8;--green:#34d399;--yellow:#fbbf24;--red:#f87171;--purple:#a78bfa;--orange:#fb923c}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--t2);min-height:100vh}
+.c{max-width:1200px;margin:0 auto;padding:24px}
+.hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px;padding-bottom:16px;border-bottom:1px solid var(--bg2)}
+.hdr h1{font-size:20px;font-weight:600;color:var(--t1)}
+.meta{font-size:13px;color:var(--td);margin-top:4px}
+.cn{color:var(--blue);font-weight:500}
+.tpl{color:var(--purple);font-size:12px;margin-top:2px}
+.ws{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--td)}
+.dot{width:8px;height:8px;border-radius:50%}
+.dot-on{background:var(--green)}.dot-off{background:var(--red)}
+.badge{display:inline-block;padding:4px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.badge-a{background:#1e3a5f;color:var(--blue)}.badge-i{background:var(--bg2);color:var(--td)}
+.pipe{display:flex;gap:6px;align-items:center;margin-bottom:28px;flex-wrap:wrap;padding:16px;background:var(--bg2);border-radius:12px}
+.arr{color:var(--bg3);font-size:16px;user-select:none}
+.nd{padding:10px 14px;border-radius:8px;font-size:13px;font-weight:500;white-space:nowrap;transition:all .3s}
+.p-pending{background:var(--bg);color:var(--td)}
+.p-active{background:#1e3a5f;color:var(--blue);box-shadow:0 0 16px rgba(56,189,248,.12);animation:pulse 2s ease-in-out infinite}
+.p-done{background:#064e3b;color:var(--green)}
+.p-fail{background:#451a1a;color:var(--red)}
+.p-gate{background:var(--bg);color:var(--yellow);border:1px dashed var(--yellow);font-size:11px}
+.gate-passed{border-color:var(--green)!important;color:var(--green)!important}
+.gate-failed{border-color:var(--red)!important;color:var(--red)!important}
+.ptag{font-size:9px;color:var(--purple);background:rgba(167,139,250,.1);padding:1px 6px;border-radius:4px;margin-left:4px;vertical-align:top}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+.panel{background:var(--bg2);border-radius:10px;padding:16px}
+.panel h3{font-size:12px;color:var(--tm);margin-bottom:12px;text-transform:uppercase;letter-spacing:.08em}
+.row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--bg)}
+.row:last-child{border-bottom:none}
+.an{font-size:13px;font-weight:500}.at{font-size:11px;color:var(--td);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag{font-size:11px;padding:2px 8px;border-radius:4px}
+.t-run{background:#1e3a5f;color:var(--blue)}.t-done{background:#064e3b;color:var(--green)}.t-err{background:#451a1a;color:var(--red)}
+.dur{font-size:12px;color:var(--td);margin-left:8px}
+.empty{color:var(--td);font-size:13px;font-style:italic;padding:8px 0}
+.audit{background:var(--bg2);border-radius:10px;padding:16px}
+.audit h3{font-size:12px;color:var(--tm);margin-bottom:12px;text-transform:uppercase;letter-spacing:.08em}
+.alog{max-height:240px;overflow-y:auto}
+.ae{font-size:12px;padding:4px 0;display:flex;gap:12px;font-family:'JetBrains Mono','Fira Code','Cascadia Code',monospace}
+.ae-t{color:var(--td);flex-shrink:0}.ae-e{color:var(--t2)}.ae-a{color:var(--purple)}
+/* 流水线选择器 */
+.psel{display:flex;gap:8px;align-items:center;margin-bottom:20px;flex-wrap:wrap}
+.psel-label{font-size:12px;color:var(--tm);text-transform:uppercase;letter-spacing:.08em}
+.pbtn{padding:6px 14px;border-radius:8px;font-size:12px;font-weight:500;background:var(--bg2);color:var(--td);border:1px solid var(--bg3);cursor:pointer;transition:all .2s}
+.pbtn:hover{border-color:var(--blue);color:var(--t2)}
+.pbtn-active{background:#1e3a5f;color:var(--blue);border-color:var(--blue)}
+.pbtn-status{font-size:10px;margin-left:4px;opacity:.7}
+.overview{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:24px}
+.ocard{background:var(--bg2);border-radius:10px;padding:14px;cursor:pointer;border:1px solid transparent;transition:all .2s}
+.ocard:hover{border-color:var(--blue)}
+.ocard-active{border-color:var(--blue);box-shadow:0 0 12px rgba(56,189,248,.1)}
+.ocard-title{font-size:14px;font-weight:600;color:var(--t1);margin-bottom:4px}
+.ocard-meta{font-size:11px;color:var(--td)}
+.ocard-bar{display:flex;gap:2px;margin-top:8px;height:4px;border-radius:2px;overflow:hidden}
+.obar-seg{flex:1;border-radius:1px}
+.obar-pending{background:var(--bg3)}.obar-active{background:var(--blue)}.obar-done{background:var(--green)}.obar-fail{background:var(--red)}
+.no-pipelines{text-align:center;padding:40px;color:var(--td);font-size:14px}
+@media(max-width:768px){.panels{grid-template-columns:1fr}.pipe{gap:4px}.nd{padding:8px 10px;font-size:11px}.overview{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="c">
+<div class="hdr"><div><h1>Pipeline Dashboard</h1><div class="meta">Change: <span class="cn" id="cn">-</span></div><div class="tpl" id="tpl"></div></div>
+<div style="text-align:right"><span class="badge badge-i" id="sb">idle</span><div class="ws" style="margin-top:8px"><span class="dot dot-off" id="wd"></span><span id="wl">Connecting...</span></div></div></div>
+<div id="overview-section"></div>
+<div id="detail-section" style="display:none">
+<div class="pipe" id="pb"></div>
+<div class="panels"><div class="panel"><h3>Active Agents</h3><div id="aa"><div class="empty">No active agents</div></div></div>
+<div class="panel"><h3>Completed Agents</h3><div id="ca"><div class="empty">No completed agents yet</div></div></div></div>
+<div class="audit"><h3>Recent Events</h3><div class="alog" id="al"><div class="empty">No events yet</div></div></div>
+</div>
+</div>
+<script>
+const B=window.location.origin;
+let currentPipeline=null,pipelinesData=[],ws,rt;
+
+function cws(){ws=new WebSocket('ws://'+location.host+'/ws');
+ws.onopen=()=>{document.getElementById('wd').className='dot dot-on';document.getElementById('wl').textContent='Connected';clearTimeout(rt)};
+ws.onclose=()=>{document.getElementById('wd').className='dot dot-off';document.getElementById('wl').textContent='Reconnecting...';rt=setTimeout(cws,3000)};
+ws.onmessage=()=>refresh()}
+
+async function refresh(){
+  try{
+    const pr=await fetch(B+'/api/v1/pipelines');
+    pipelinesData=await pr.json();
+    renderOverview();
+    if(currentPipeline)await refreshPipeline(currentPipeline);
+  }catch{}}
+
+function renderOverview(){
+  const el=document.getElementById('overview-section');
+  if(!pipelinesData.length){el.innerHTML='<div class="no-pipelines">No pipelines registered. Use <code>init.sh</code> to create one.</div>';return}
+  let h='<div class="psel"><span class="psel-label">Pipelines</span>';
+  pipelinesData.forEach(p=>{
+    const active=currentPipeline===p.id;
+    const statusIcon=p.current_stage?'▶':'○';
+    h+='<button class="pbtn'+(active?' pbtn-active':'')+'" onclick="selectPipeline(\''+p.id+'\')">'+statusIcon+' '+p.id+'<span class="pbtn-status">'+p.stage_summary.completed+'/'+p.stage_summary.total+'</span></button>'});
+  h+='</div>';
+  if(!currentPipeline){
+    h+='<div class="overview">';
+    pipelinesData.forEach(p=>{
+      h+='<div class="ocard" onclick="selectPipeline(\''+p.id+'\')">';
+      h+='<div class="ocard-title">'+p.id+'</div>';
+      h+='<div class="ocard-meta">'+p.template+(p.change_name?' · '+p.change_name:'')+(p.current_stage?' · @'+p.current_stage:'')+'</div>';
+      h+='<div class="ocard-bar">';
+      const total=p.stage_summary.total||1;
+      for(let i=0;i<p.stage_summary.completed;i++)h+='<div class="obar-seg obar-done"></div>';
+      for(let i=0;i<p.stage_summary.active;i++)h+='<div class="obar-seg obar-active"></div>';
+      for(let i=0;i<p.stage_summary.failed;i++)h+='<div class="obar-seg obar-fail"></div>';
+      const pending=total-p.stage_summary.completed-p.stage_summary.active-p.stage_summary.failed;
+      for(let i=0;i<pending;i++)h+='<div class="obar-seg obar-pending"></div>';
+      h+='</div></div>'});
+    h+='</div>'}
+  el.innerHTML=h}
+
+function selectPipeline(id){
+  if(currentPipeline===id){currentPipeline=null;document.getElementById('detail-section').style.display='none';renderOverview();return}
+  currentPipeline=id;
+  document.getElementById('detail-section').style.display='block';
+  renderOverview();
+  refreshPipeline(id)}
+
+async function refreshPipeline(id){
+  try{
+    const[sr,ar,stg]=await Promise.all([
+      fetch(B+'/api/v1/pipeline/state?pipeline='+id),
+      fetch(B+'/api/v1/pipeline/audit?limit=20&pipeline='+id),
+      fetch(B+'/api/v1/pipeline/stages?pipeline='+id)]);
+    const SD=await stg.json();
+    rs(await sr.json(),SD);
+    ra(await ar.json())
+  }catch{}}
+
+function rs(s,SD){
+  document.getElementById('cn').textContent=s.change_name||'-';
+  const te=document.getElementById('tpl');
+  te.textContent=(s._template_name?'Template: '+s._template_name:'')+(s.pipeline_id?' · Pipeline: '+s.pipeline_id:'');
+  const b=document.getElementById('sb'),st=s.current_stage||'idle';
+  b.textContent=st;b.className='badge '+(st==='idle'||!st?'badge-i':'badge-a');
+  if(!SD||!SD.length)return;
+  const sm={},gm={};(s.stages||[]).forEach(x=>sm[x.name]=x);(s.gates||[]).forEach(x=>gm[x.name]=x);
+  let h='';SD.forEach((d,i)=>{if(i)h+='<span class="arr">→</span>';const ss=sm[d.name],st2=ss?ss.status:'pending';
+  if(d.gate){const g=gm[d.name],gr=g?g.result:'pending';let c='nd p-gate';if(gr==='passed')c+=' gate-passed';else if(gr==='failed')c+=' gate-failed';
+  h+='<span class="'+c+'">'+d.label+'</span>'}else{let c='nd p-'+st2,ex=d.parallel?'<span class="ptag">∥</span>':'',du='';
+  if(ss&&ss.duration_ms>0)du=' <span style="font-size:10px;color:var(--td)">'+Math.round(ss.duration_ms/1000)+'s</span>';
+  h+='<span class="'+c+'">'+d.label+ex+du+'</span>'}});document.getElementById('pb').innerHTML=h;
+  const ae=document.getElementById('aa');if(!s.active_agents||!s.active_agents.length)ae.innerHTML='<div class="empty">No active agents</div>';
+  else ae.innerHTML=s.active_agents.map(a=>'<div class="row"><div><div class="an">'+a.type+'</div><div class="at" title="'+(a.task||'')+'">'+(a.task||'')+'</div></div><span class="tag t-run">running</span></div>').join('');
+  const ce=document.getElementById('ca');if(!s.completed_agents||!s.completed_agents.length)ce.innerHTML='<div class="empty">No completed agents yet</div>';
+  else ce.innerHTML=s.completed_agents.map(a=>{const tc=a.status==='completed'||a.status==='done'?'t-done':'t-err',lb=a.status==='completed'||a.status==='done'?'done':a.status;
+  return'<div class="row"><div class="an">'+a.type+'</div><div><span class="tag '+tc+'">'+lb+'</span><span class="dur">'+(a.duration||'')+'</span></div></div>'}).join('')}
+
+function ra(e){const el=document.getElementById('al');if(!e||!e.length){el.innerHTML='<div class="empty">No events yet</div>';return}
+el.innerHTML=e.reverse().map(x=>{const t=x.timestamp?new Date(x.timestamp).toLocaleTimeString('zh-CN'):'',ag=x.agent_type?'<span class="ae-a">'+x.agent_type+'</span>':'';
+return'<div class="ae"><span class="ae-t">'+t+'</span><span class="ae-e">'+x.event+'</span>'+ag+'</div>'}).join('')}
+
+cws();refresh();setInterval(refresh,5000);
+</script>
+</body></html>

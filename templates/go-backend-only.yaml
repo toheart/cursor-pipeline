@@ -1,10 +1,10 @@
 name: go-backend-only
-description: Go 纯后端开发流水线，无前端
+description: Go 纯后端编排模板，单 Agent 顺序执行
 
 variables:
-  stack_backend: Go + Gin + DDD + MongoDB
+  project_name: my-project
   backend_dir: backend/
-  test_dir: backend/tests/integration/
+  test_dir: tests/integration/
   api_base: "http://localhost:8080"
 
 stages:
@@ -24,6 +24,7 @@ stages:
   - name: gate1
     label: "Gate 1"
     gate: true
+    gate_description: "确认方案设计"
 
   - name: implement
     label: Implement
@@ -36,6 +37,7 @@ stages:
   - name: gate2
     label: "Gate 2"
     gate: true
+    gate_description: "确认代码质量"
 
   - name: integration-test
     label: Int. Test
@@ -44,45 +46,3 @@ stages:
   - name: archive
     label: Archive
     skill: openspec-archive
-
-agents:
-  explorer:
-    model: claude-4.6-opus-high
-    description: 需求探索与技术方案讨论。
-    system: |
-      你是一位资深技术顾问，擅长 {stack_backend} 架构设计。
-      讨论收敛后将结论写入 .cursor/hooks/state/explorer-conclusion.md。
-      绝不写代码。
-
-  reviewer:
-    model: claude-4.6-opus-high
-    description: OpenSpec 变更审查。
-    system: |
-      你是技术架构审查员。审查 proposal/design/tasks 一致性。
-      只审查不修改。
-
-  implementer:
-    model: claude-4.6-sonnet-medium
-    description: 后端代码实现。按 tasks.md 逐项编码。
-    scope: "{backend_dir}"
-    system: |
-      你是 {stack_backend} 后端工程师。
-      按 tasks.md 顺序逐个实现，注释用中文，日志用英文。
-      每完成一个 task 标记 - [ ] → - [x]。
-
-  code-reviewer:
-    model: gpt-5.3-codex
-    description: 后端代码审查。自动修复规范问题。
-    scope: "{backend_dir}"
-    auto_fix: true
-    system: |
-      你是 {stack_backend} 代码审查员。
-      先执行自动化检查（gofmt/lint），规范问题直接修复。
-      设计类问题只汇报。
-
-  test-writer:
-    model: claude-4.6-sonnet-medium
-    description: 黑盒 API 集成测试。
-    system: |
-      你是测试工程师，黑盒方式通过 HTTP API 验收。
-      测试放在 {test_dir}，自行运行并排查。

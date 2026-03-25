@@ -1,6 +1,8 @@
-# Orchestrator 编写指南
+# Orchestrator 结构参考
 
-本文档是 AI 在引导用户创建 orchestrator.md 时的参考蓝本。AI 应根据用户选择的模板和项目实际情况，定制生成 orchestrator.md。
+本文档是 `generate-orchestrator.ts` 生成逻辑的人类可读说明。orchestrator.md 由脚本从 YAML 模板确定性生成，**不再需要 AI 在运行时参考本文档**。
+
+如需了解生成逻辑或手动编写 orchestrator.md，可参考以下结构。
 
 ## orchestrator.md 的核心结构
 
@@ -215,19 +217,8 @@ propose → review → [Gate 1] → implement(BE ∥ FE) → code-review(BE ∥ 
 <Gate 处的决策记录>
 ```
 
-## 定制要点
-
-AI 在引导用户创建 orchestrator 时需要了解的信息：
-
-1. **项目名称和技术栈**——影响角色描述
-2. **目录结构**——影响 scope、测试路径
-3. **测试方式**——是否有 QA 浏览器测试、集成测试如何运行
-4. **部署方式**——是否需要在 archive 后触发部署
-5. **团队习惯**——Gate 是否需要多人确认、是否需要 code owner review
-6. **特殊 Skill**——项目是否有自定义 Skill 需要在某个阶段调用
-
 ## 与模板的关系
 
-- 模板定义了"有哪些阶段、用哪些 Agent"
-- orchestrator.md 定义了"如何编排这些阶段、如何与用户交互"
-- 两者需要保持一致：orchestrator 引用的 Agent 名称必须与模板中的 agents key 对应
+- 模板定义了"有哪些阶段、引用哪些 Agent"（纯编排，不包含 Agent 定义）
+- `generate-orchestrator.ts` 从模板确定性生成 orchestrator.md
+- orchestrator 中引用的 Agent 名称来自模板 stages 中的 `agent` 字段，必须与 `.cursor/agents/` 下已有的 Agent 文件名对应

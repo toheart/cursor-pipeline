@@ -1,128 +1,129 @@
+---
+name: cursor-pipeline
+description: 编排已有 SubAgent 的开发流水线。通过 YAML 模板定义阶段顺序、Gate、并行策略，从模板确定性生成 orchestrator.md，提供 Hooks 集成和实时看板。支持多流水线并行运行。用户说"初始化流水线""创建流水线""设置编排""pipeline init"，或需要为项目搭建 AI 编排工作流时触发。
+---
+
 # cursor-pipeline
 
-模板驱动的 Cursor AI 开发流水线。通过 YAML 模板定义阶段和 Agent 角色，借助 AI 会话引导用户创建完整的编排器，提供 Hooks 集成和实时看板。
+编排已有 SubAgent 的开发流水线。不创建 Agent，只编排。支持同一项目运行多条流水线。
 
-## 触发场景
-
-用户说"初始化流水线""创建流水线""设置开发流水线""pipeline init"，或需要为项目搭建 AI 编排工作流时触发。
+**前置依赖**：[Bun](https://bun.sh)、`jq`。
 
 ## 工作流程
 
-当用户激活此 Skill 后，按以下步骤引导：
+### 步骤 0：探测已有 Agent
 
-### 步骤 1：了解项目
+扫描 `.cursor/agents/*.md`，排除 `orchestrator*.md`。
 
-向用户询问以下信息（可从项目文件中推断，减少提问）：
+- **没有 Agent** → 教学模式（见下方）
+- **有 Agent** → 展示列表，进入步骤 1
 
-1. **项目名称**
-2. **技术栈**（如 Go + React、Node.js + React、纯后端等）
-3. **目录结构**（后端目录、前端目录、测试目录）
-4. **是否需要前后端并行**编码和审查
-5. **测试方式**（是否有浏览器 E2E 测试、集成测试如何运行）
-6. **是否使用 OpenSpec** 进行变更管理
+### 步骤 1：讨论编排方案
 
-尽量通过读取项目文件自动推断（如 `go.mod`、`package.json`、`openspec/` 目录），只对无法推断的部分提问。
+了解项目（从 `go.mod`、`package.json` 等文件推断技术栈和目录结构），与用户讨论：
 
-### 步骤 2：选择或推荐模板
+1. 这些 Agent 按什么顺序协作？
+2. 哪些阶段需要 Gate（用户确认点）？
+3. 哪些 Agent 可以并行执行？
+4. 是否使用 OpenSpec 进行变更管理？
+5. 是否需要多条流水线？（如功能开发 + Bug 修复 + 重构各用不同流程）
 
-读取 `<skill-dir>/templates/` 下的内置模板：
+用 `<skill-dir>/templates/` 下的内置模板举例帮助用户理解：
 
 | 模板 | 适用场景 |
 |------|---------|
-| `go-react-fullstack.yaml` | Go + React 全栈，前后端并行 |
-| `go-backend-only.yaml` | Go 纯后端，单 Agent 顺序执行 |
-| `node-fullstack.yaml` | Node.js + React 全栈，前后端并行 |
+| `go-react-fullstack.yaml` | 全栈，前后端并行 |
+| `go-backend-only.yaml` | 纯后端，顺序执行 |
+| `node-fullstack.yaml` | Node.js 全栈，前后端并行 |
 
-根据步骤 1 的信息推荐最合适的模板，或询问用户选择。
+模板格式参考 `references/template-format.md`。
 
-如果内置模板不满足需求，告知用户可以基于现有模板自定义（参考 `references/template-format.md`）。
+### 步骤 2：产出 YAML 编排模板
 
-### 步骤 3：执行基础设施初始化
+基于讨论结果：
+- 选择最接近的内置模板并调整，或从零创建自定义 YAML
+- 确认 `variables`（项目名、目录路径、端口等）
+- stages 中 `agent` 字段必须与 `.cursor/agents/` 下已有的 Agent 名称对应
+- 将 YAML 写入 `.cursor/pipelines/` 目录
 
-运行 init 脚本搭建 Hooks 基础设施：
+### 步骤 3：生成 orchestrator + 部署 hooks
+
+运行 init 脚本一步完成：
 
 ```bash
-bash <skill-dir>/scripts/init.sh
+bash <skill-dir>/scripts/init.sh -t <模板名> -p <pipeline-id>
 ```
 
-或者如果用户的终端不支持交互式选择，手动执行等效操作：
+`-p` 指定 pipeline ID，不同 ID 可复用同一模板创建独立流水线。省略 `-p` 时默认使用模板名作为 ID。
 
-1. 复制 `scripts/forward-hook.sh` → `.cursor/hooks/forward-hook.sh`
-2. 复制 `scripts/auto-format.sh` → `.cursor/hooks/auto-format.sh`
-3. 复制 `scripts/pipeline-server.ts` → `.cursor/hooks/pipeline-server.ts`
-4. 复制 `scripts/hooks.json.tpl` → `.cursor/hooks.json`（如果不存在）
-5. 创建 `.cursor/hooks/state/` 目录
-6. 运行 `bun run <skill-dir>/scripts/generate-agents.ts <模板路径> .cursor/agents` 生成 Agent 定义
+init.sh 执行的操作：
+1. 复制 hook 脚本 → `.cursor/hooks/`
+2. 复制 `hooks.json.tpl` → `.cursor/hooks.json`（如果不存在）
+3. 复制模板到 `.cursor/pipelines/`
+4. 运行 `generate-orchestrator.ts` 生成 `.cursor/agents/orchestrator-{pipeline-id}.md`
+5. 创建 pipeline state 文件 `.cursor/hooks/state/pipeline-{pipeline-id}.json`
 
-### 步骤 4：引导创建 orchestrator.md
+### 步骤 4：验证和启动
 
-**这是核心步骤。** `generate-agents.ts` 只生成常规 Agent（implementer / reviewer 等），orchestrator 需要根据项目情况定制。
+1. 检查文件完整性（`hooks.json`、`pipeline-server.ts`、`orchestrator-*.md`）
+2. 启动 pipeline-server：`bun run .cursor/hooks/pipeline-server.ts`
+3. 告知用户：看板 http://127.0.0.1:19090/（支持切换查看不同流水线）
+4. 使用 orchestrator 的触发词启动对应流水线
 
-读取 `<skill-dir>/references/orchestrator-guide.md` 获取编写指南，然后根据以下信息为用户生成 `.cursor/agents/orchestrator.md`：
+### 多流水线示例
 
-1. 用户选择的模板（决定阶段和 Agent 列表）
-2. 项目实际情况（目录结构、测试方式等）
-3. 用户对 Gate 设置的偏好
-4. 项目特有的 Skill（如项目自带的 code-review Skill）
+同一项目可创建多条流水线，共享 Agent 但使用不同编排流程：
 
-生成后展示给用户确认，根据反馈调整。
+```bash
+# 功能开发流水线（完整流程）
+bash <skill-dir>/scripts/init.sh -t go-react-fullstack -p feature
 
-orchestrator.md 必须包含的内容：
-- 角色定义（YAML Front Matter + 核心原则）
-- 流水线阶段总览（流程图 + 表格）
-- 每个阶段的详细调度指令（传给 SubAgent 的 prompt 要包含什么）
-- Gate 交互格式（用户看到的选项）
-- 中断恢复逻辑
-- 并行调度注意事项（如果有并行阶段）
-- 完成总结格式
+# Bug 修复流水线（精简流程，跳过 explore 和 propose）
+bash <skill-dir>/scripts/init.sh -t go-backend-only -p bugfix
+```
 
-### 步骤 5：验证和启动
+生成的文件：
+- `.cursor/agents/orchestrator-feature.md` — 触发词"启动 feature"
+- `.cursor/agents/orchestrator-bugfix.md` — 触发词"启动 bugfix"
+- `.cursor/hooks/state/pipeline-feature.json` — feature 流水线状态
+- `.cursor/hooks/state/pipeline-bugfix.json` — bugfix 流水线状态
 
-1. 检查生成的文件完整性：
-   - `.cursor/hooks.json` — Hook 配置
-   - `.cursor/hooks/pipeline-server.ts` — 流水线服务
-   - `.cursor/hooks/forward-hook.sh` — 事件转发
-   - `.cursor/hooks/auto-format.sh` — 自动格式化
-   - `.cursor/agents/orchestrator.md` — 编排器
-   - `.cursor/agents/*.md` — 各角色 Agent
+看板页面顶部有流水线选择器，可切换查看不同流水线的进度。
 
-2. 启动 pipeline-server 验证：
-   ```bash
-   bun run .cursor/hooks/pipeline-server.ts -t <模板名>
-   ```
+## 教学模式
 
-3. 告知用户后续使用方式：
-   - 看板地址：http://127.0.0.1:19090/
-   - 触发编排器：在 Cursor 中说"开始做"或"启动流水线"
-   - 单独使用 explorer：说"讨论一下"或"分析一下"
+当项目没有 `.cursor/agents/*.md` 时进入此模式。
 
-## 内置模板说明
+目标：帮助用户理解 SubAgent 编排概念，然后引导他先创建 Agent，创建完后回来做编排。
 
-模板使用 YAML 格式，定义 `stages`（阶段）和 `agents`（角色）。
-详细格式参考 `references/template-format.md`。
+教学要点（用内置模板 `go-react-fullstack.yaml` 举例）：
 
-核心概念：
-- **stages**: 定义流水线阶段顺序，支持 `parallel`（并行）、`gate`（门禁）、`skill`（调用 Skill）
-- **agents**: 定义 Agent 角色，包含 model、system prompt、scope
-- **variables**: 模板变量，在 system prompt 中用 `{var}` 引用
+1. **SubAgent 是什么**：Cursor 中的 `.cursor/agents/*.md` 文件定义了专家角色（如 `backend-implementer`），每个 Agent 有独立的 system prompt 和作用域
+2. **编排是什么**：orchestrator 按阶段调度这些 Agent，在关键节点（Gate）暂停等用户确认
+3. **并行是什么**：前后端 implementer 可以同时启动，各自在自己的 scope 内工作
+4. **Gate 是什么**：用户检查点，决定是否继续、修改还是回退
+5. **多流水线**：同一套 Agent 可以用不同的编排模板组成多条流水线，适应不同开发场景
+
+引导用户创建自己的 Agent 后，再次激活此 Skill 即可进入编排流程。
 
 ## 目录结构
 
 ```
 cursor-pipeline/
-├── SKILL.md                           ← 本文件（AI 会话引导入口）
+├── SKILL.md                        ← 本文件
+├── agents/openai.yaml              ← UI 元数据
 ├── scripts/
-│   ├── init.sh                        ← 基础设施初始化脚本
-│   ├── generate-agents.ts             ← Agent .md 生成器（不含 orchestrator）
-│   ├── pipeline-server.ts             ← 流水线服务（Bun 单文件，模板驱动）
-│   ├── forward-hook.sh                ← Hook 事件转发
-│   ├── auto-format.sh                 ← 自动格式化
-│   └── hooks.json.tpl                 ← hooks.json 模板
-├── templates/
-│   ├── go-react-fullstack.yaml        ← Go + React 全栈
-│   ├── go-backend-only.yaml           ← Go 纯后端
-│   └── node-fullstack.yaml            ← Node.js + React 全栈
+│   ├── init.sh                     ← 初始化脚本（-t 模板 -p pipeline-id）
+│   ├── generate-orchestrator.ts    ← 从 YAML 生成 orchestrator-{id}.md
+│   ├── pipeline-server.ts          ← 流水线服务（支持多 pipeline 并行）
+│   ├── yaml-parser.ts              ← 共享 YAML 解析模块
+│   ├── forward-hook.sh             ← Hook 事件转发
+│   ├── auto-format.sh              ← 自动格式化
+│   └── hooks.json.tpl              ← hooks.json 模板
+├── assets/
+│   └── dashboard.html              ← 看板 HTML（支持多流水线切换）
+├── templates/                      ← YAML 编排模板（纯编排，不含 Agent 定义）
 └── references/
-    ├── template-format.md             ← YAML 模板格式说明
-    └── orchestrator-guide.md          ← Orchestrator 编写参考指南
+    ├── template-format.md          ← 模板格式说明
+    └── orchestrator-guide.md       ← Orchestrator 结构参考（开发者文档）
 ```

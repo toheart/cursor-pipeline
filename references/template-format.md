@@ -1,6 +1,6 @@
 # Pipeline Template Format
 
-模板使用 YAML 格式定义流水线的阶段、Agent 角色和变量。
+编排模板使用 YAML 格式定义流水线的阶段顺序和变量。模板**不定义 Agent**，只引用项目中已有的 `.cursor/agents/*.md`。
 
 ## 顶层字段
 
@@ -8,52 +8,49 @@
 |------|------|------|------|
 | `name` | string | 是 | 模板名称（kebab-case） |
 | `description` | string | 是 | 模板描述 |
-| `variables` | object | 否 | 可在 agent system prompt 中用 `{var}` 引用的变量 |
+| `variables` | object | 否 | 可在 `scope` 等字段中用 `{var}` 引用的变量 |
 | `stages` | array | 是 | 流水线阶段定义 |
-| `agents` | object | 是 | Agent 角色定义（key 为 agent 名称） |
 
 ## stages 字段
 
 每个 stage 支持以下字段：
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `name` | string | 阶段名称（用于状态追踪） |
-| `label` | string | 看板显示标签 |
-| `agent` | string | 单 Agent 阶段，引用 agents 中的 key |
-| `skill` | string | 使用 Skill 而非 SubAgent |
-| `gate` | boolean | 是否为 Gate（需要用户确认） |
-| `optional` | boolean | 是否可选阶段 |
-| `parallel` | array | 并行 Agent 列表，每项含 `agent` 和 `scope` |
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | string | 是 | 阶段名称（用于状态追踪） |
+| `label` | string | 是 | 看板显示标签 |
+| `agent` | string | 否 | 引用 `.cursor/agents/` 下已有 Agent 的名称 |
+| `skill` | string | 否 | 使用 Skill 而非 SubAgent |
+| `gate` | boolean | 否 | 是否为 Gate（需要用户确认） |
+| `gate_description` | string | 否 | Gate 的描述文本（如"确认方案设计"），不填时使用 label |
+| `optional` | boolean | 否 | 是否可选阶段 |
+| `parallel` | array | 否 | 并行 Agent 列表，每项含 `agent` 和 `scope` |
 
-## agents 字段
-
-每个 agent 支持以下字段：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `model` | string | 使用的模型 |
-| `description` | string | 触发描述 |
-| `system` | string | System prompt（支持 `{变量}` 替换） |
-| `skills` | array | 引用的 Skill 名称列表 |
-| `scope` | string | 工作范围（如 `backend/`） |
-| `auto_fix` | boolean | 是否自动修复规范问题（reviewer 用） |
+**`agent` 字段是引用，不是定义**。其值必须与 `.cursor/agents/` 目录下某个 `.md` 文件的文件名（不含扩展名）对应。
 
 ## 变量替换
 
-`system` 字段中的 `{变量名}` 会被 `variables` 中的值替换。
-内置变量：`{goal}`（用户目标）、`{change_name}`（变更名称）。
-未匹配的变量原样保留。
+`scope` 等字段中的 `{变量名}` 会被 `variables` 中的值替换。未匹配的变量原样保留。
 
 ## 示例
 
 ```yaml
 name: go-react-fullstack
-description: Go + React 全栈开发流水线
+description: Go + React 全栈编排模板
 variables:
-  stack_backend: Go + Gin + DDD
-  stack_frontend: React + TypeScript
+  project_name: my-project
+  backend_dir: backend/
+  frontend_dir: frontend/
 stages:
+  - name: propose
+    label: Propose
+    skill: openspec-propose
+
+  - name: gate1
+    label: "Gate 1"
+    gate: true
+    gate_description: "确认方案设计"
+
   - name: implement
     label: "BE ∥ FE"
     parallel:
@@ -61,9 +58,8 @@ stages:
         scope: "## Backend Tasks"
       - agent: frontend-implementer
         scope: "## Frontend Tasks"
-agents:
-  backend-implementer:
-    model: claude-4.6-sonnet-medium
-    system: "你是一位 {stack_backend} 后端工程师..."
-    scope: "backend/"
+
+  - name: archive
+    label: Archive
+    skill: openspec-archive
 ```
