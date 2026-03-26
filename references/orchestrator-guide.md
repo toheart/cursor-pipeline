@@ -1,22 +1,26 @@
 # Orchestrator 结构参考
 
-本文档是 `generate-orchestrator.ts` 生成逻辑的人类可读说明。orchestrator.md 由脚本从 YAML 模板确定性生成，**不再需要 AI 在运行时参考本文档**。
+本文档是 `generate-orchestrator.ts` 生成逻辑的人类可读说明。orchestrator SKILL.md 由脚本从 YAML 模板确定性生成，输出到 `.cursor/skills/orchestrator-{id}/SKILL.md`。
 
-如需了解生成逻辑或手动编写 orchestrator.md，可参考以下结构。
+orchestrator 以 **Skill** 形态存在（而非 SubAgent），由主 Agent 加载后获得编排能力，通过 Task 工具调度其他 SubAgent。
 
-## orchestrator.md 的核心结构
+如需了解生成逻辑或手动编写 orchestrator SKILL.md，可参考以下结构。
 
-一个完整的 orchestrator.md 必须包含以下部分：
+## SKILL.md 的核心结构
+
+一个完整的 orchestrator SKILL.md 必须包含以下部分：
 
 ### 1. YAML Front Matter + 角色定义
 
 ```markdown
 ---
-name: orchestrator
-description: 开发流水线编排器。协调 <阶段列表> 全流程。用户说"开始做""启动流水线""全流程""编排"时触发。支持从中断处恢复。
+name: orchestrator-{id}
+description: 开发流水线编排器。协调 <阶段列表> 全流程。用户说"开始做""启动流水线""全流程""编排"时触发。支持从中断处恢复。必须作为 Skill 由主 Agent 加载（而非 SubAgent），以便通过 Task 工具调度子 Agent。
 ---
 
-你是 <项目名> 的开发流水线编排器。你的职责是按顺序调度专家 SubAgent 完成一个完整的功能开发周期。
+# <项目名> 开发流水线编排器
+
+加载本 Skill 后，你（主 Agent）将扮演流水线编排器角色。你的职责是按顺序调度专家 SubAgent 完成一个完整的功能开发周期。
 ```
 
 ### 2. 核心原则（必须保留）
@@ -42,31 +46,30 @@ orchestrator 必须在每个阶段转换时调用 pipeline-server 的 API 主动
 这是因为 Cursor Hook 只能被动捕获 SubAgent 的 start/stop 事件，
 无法感知 Skill 调用、Gate 决策等非 SubAgent 操作。
 
+**每个变更创建独立的 pipeline 实例**，通过 `POST /api/v1/pipelines` 创建，
+ID 自动生成为 `{template}--{change_name}`。同一模板可以有多个并发实例。
+
 ```markdown
 ## Pipeline Server API
 
-pipeline-server 运行在 http://127.0.0.1:19090。orchestrator 通过以下 API 主动上报状态：
+pipeline-server 运行在 http://127.0.0.1:19090。
 
-### 设置 Change 名称
-流水线启动时调用一次，设置当前 change 名称。
+### 创建 / 恢复 Pipeline 实例
+启动时首先调用此 API，传入模板名和变更名。server 自动生成 pipeline_id。
+如果同名实例已存在（中断恢复），返回 resumed: true 并保留原有状态。
 \`\`\`bash
-curl -s -X POST http://127.0.0.1:19090/api/v1/pipeline/change \
+curl -s -X POST http://127.0.0.1:19090/api/v1/pipelines \
   -H "Content-Type: application/json" \
-  -d '{"name": "add-skill-favorite"}'
+  -d '{"template": "<template-name>", "change_name": "<change-name>"}'
 \`\`\`
+响应中 id 字段即为 pipeline_id，后续所有 API 调用和 SubAgent 标记都使用这个 ID。
 
 ### 推进阶段状态
 每个阶段开始时标记为 active，完成时标记为 completed/failed/skipped。
 \`\`\`bash
-# 标记阶段开始
 curl -s -X POST http://127.0.0.1:19090/api/v1/pipeline/stage \
   -H "Content-Type: application/json" \
-  -d '{"stage": "propose", "status": "active"}'
-
-# 标记阶段完成
-curl -s -X POST http://127.0.0.1:19090/api/v1/pipeline/stage \
-  -H "Content-Type: application/json" \
-  -d '{"stage": "propose", "status": "completed"}'
+  -d '{"pipeline": "<pipeline-id>", "stage": "propose", "status": "active"}'
 \`\`\`
 
 ### 更新 Gate 结果
@@ -74,15 +77,23 @@ curl -s -X POST http://127.0.0.1:19090/api/v1/pipeline/stage \
 \`\`\`bash
 curl -s -X POST http://127.0.0.1:19090/api/v1/pipeline/gate \
   -H "Content-Type: application/json" \
-  -d '{"gate": "gate1", "result": "passed"}'
+  -d '{"pipeline": "<pipeline-id>", "gate": "gate1", "result": "passed"}'
 \`\`\`
 
 ### 重置流水线
 \`\`\`bash
-curl -s -X POST http://127.0.0.1:19090/api/v1/pipeline/reset
+curl -s -X POST http://127.0.0.1:19090/api/v1/pipelines/reset \
+  -H "Content-Type: application/json" \
+  -d '{"id": "<pipeline-id>"}'
 \`\`\`
 
-**重要**：SubAgent 阶段（implement/code-review 等）的 start/stop 由 Hook 自动追踪，
+### 查看所有活跃流水线
+\`\`\`bash
+curl -s http://127.0.0.1:19090/api/v1/pipelines
+\`\`\`
+
+**重要**：SubAgent 阶段（implement/code-review 等）的 start/stop 由 Hook 自动追踪
+（通过 `[pipeline:<pipeline-id>]` 标记路由），
 但 orchestrator 仍应在启动并行 Agent 前主动标记阶段为 active，确保看板即时更新。
 Skill 阶段（propose/archive）和 Gate 阶段完全依赖主动上报，Hook 无法感知。
 ```
@@ -103,9 +114,10 @@ propose → review → [Gate 1] → implement(BE ∥ FE) → code-review(BE ∥ 
 #### 启动时检查
 
 必须包含：
-1. 检查 explorer 结论（`.cursor/hooks/state/explorer-conclusion.md`）
-2. 检查流水线状态（`.cursor/hooks/state/pipeline-state.json`）
+1. 查询已有流水线：`curl -s http://127.0.0.1:19090/api/v1/pipelines`
+2. 检查 explorer 结论（`.cursor/hooks/state/explorer-conclusion.md`）
 3. 如果都没有——询问用户
+4. 确定 change 名称后，创建 pipeline 实例（`POST /api/v1/pipelines`）
 
 #### 每个阶段的详细说明
 
@@ -122,14 +134,16 @@ propose → review → [Gate 1] → implement(BE ∥ FE) → code-review(BE ∥ 
 - 阶段开始由 Hook subagentStart 自动标记，但建议仍主动标记确保一致性
 - 委托给哪个 SubAgent
 - prompt 必须包含的内容（change 名称、要读取的文件、具体指令）
-- 阶段完成由 Hook subagentStop 自动标记
+- **SubAgent 完成后，必须显式标记阶段为 completed**：`curl POST /api/v1/pipeline/stage {"stage":"review","status":"completed"}`
+- 不能完全依赖 Hook 自动推断（多流水线并行时 Hook 可能误匹配到其他流水线）
 
 **对于并行阶段**（implement / code-review）：
 - 启动前主动标记：`curl POST /api/v1/pipeline/stage {"stage":"implement","status":"active"}`
 - 用 ASCII 图展示并行结构
 - 分别说明每个并行 Agent 的 prompt 内容
 - 强调"等待所有并行 SubAgent 都完成后再进入下一阶段"
-- Hook 会自动追踪每个 SubAgent 的 start/stop，并在所有同阶段 Agent 完成后标记阶段为 completed
+- **所有并行 SubAgent 完成后，必须显式标记阶段为 completed**：`curl POST /api/v1/pipeline/stage {"stage":"implement","status":"completed"}`
+- 不能完全依赖 Hook 自动推断（Cursor Hook 上报的 subagent_type 是底层模型类型，多流水线并行时 Hook 可能误匹配）
 
 **对于 Gate 阶段**：
 - 必须给出用户看到的交互格式模板
@@ -157,9 +171,11 @@ propose → review → [Gate 1] → implement(BE ∥ FE) → code-review(BE ∥ 
 ## 中断恢复逻辑
 
 当用户说「继续」或再次调用 orchestrator 时：
-1. 读取 `.cursor/hooks/state/pipeline-state.json`
-2. 根据 `current_stage` 和 `stages` 的状态，定位到中断点
-3. 告知用户当前恢复点，确认后继续
+1. 查询所有流水线：`curl -s http://127.0.0.1:19090/api/v1/pipelines`
+2. 列出未完成的实例供用户选择（如只有一个则自动恢复）
+3. 用选中实例的 pipeline_id 调用 `POST /api/v1/pipelines`（幂等，`resumed: true`），恢复状态
+4. 根据 `current_stage` 和 `stages` 的状态，定位到中断点
+5. 告知用户当前恢复点，确认后继续
 ```
 
 ### 6. 并行调度注意事项（有并行阶段时）
@@ -220,5 +236,6 @@ propose → review → [Gate 1] → implement(BE ∥ FE) → code-review(BE ∥ 
 ## 与模板的关系
 
 - 模板定义了"有哪些阶段、引用哪些 Agent"（纯编排，不包含 Agent 定义）
-- `generate-orchestrator.ts` 从模板确定性生成 orchestrator.md
+- `generate-orchestrator.ts` 从模板确定性生成 `.cursor/skills/orchestrator-{id}/SKILL.md`
+- orchestrator 以 Skill 形态由主 Agent 加载，通过 Task 工具调度 `.cursor/agents/` 下的 SubAgent
 - orchestrator 中引用的 Agent 名称来自模板 stages 中的 `agent` 字段，必须与 `.cursor/agents/` 下已有的 Agent 文件名对应

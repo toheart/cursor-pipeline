@@ -245,10 +245,9 @@ function getActivePipeline(url: URL): PipelineInstance | null {
   const id = url.searchParams.get("pipeline");
   if (!id) {
     const all = listPipelines();
-    // 默认返回最近活跃的
-    const active = all.filter(p => p.state.current_stage || p.state.started_at);
-    if (active.length === 1) return active[0];
-    return all[0] ?? null;
+    if (all.length === 1) return all[0];
+    // 多个实例时不猜测，要求显式指定
+    return null;
   }
   return loadPipeline(id) ?? null;
 }
@@ -353,21 +352,26 @@ function formatDuration(ms: number): string {
 }
 
 // ─── Hook 事件处理 ───
-// Hook 事件需要匹配到正确的 pipeline。通过 task/description 中的 pipeline_id 或 agent 名称推断。
+// Hook 事件路由：优先用 [pipeline:ID] 精确匹配，其次用 change_name 匹配，最后 fallback
 function findPipelineForEvent(event: HookEvent): PipelineInstance | null {
   const taskText = (event.task ?? "") as string;
   const descText = (event.description ?? "") as string;
   const searchText = [taskText, descText].join(" ").toLowerCase();
 
-  // 优先从文本中寻找 pipeline_id 标记
+  // 1. 优先从 [pipeline:ID] 标记精确匹配
   const idMatch = searchText.match(/\[pipeline:([^\]]+)\]/);
   if (idMatch) {
     const inst = loadPipeline(idMatch[1]);
     if (inst) return inst;
   }
 
-  // 按 agent 名称匹配：检查每个 pipeline 的 agentRefs
   const all = listPipelines();
+
+  // 2. 按 change_name 匹配（task 文本中包含某个实例的变更名）
+  const byChange = all.filter(p => p.state.change_name && searchText.includes(p.state.change_name.toLowerCase()));
+  if (byChange.length === 1) return byChange[0];
+
+  // 3. 按 agent 名称匹配（仅在只有一个候选时生效）
   const candidates: PipelineInstance[] = [];
   for (const inst of all) {
     for (const ref of inst.template.agentRefs) {
@@ -376,11 +380,11 @@ function findPipelineForEvent(event: HookEvent): PipelineInstance | null {
   }
   if (candidates.length === 1) return candidates[0];
 
-  // 返回有活跃阶段的 pipeline
+  // 4. 返回唯一活跃的 pipeline
   const active = all.filter(p => p.state.current_stage && p.state.active_agents.length > 0);
   if (active.length === 1) return active[0];
 
-  return all[0] ?? null;
+  return null;
 }
 
 function handleHookEvent(event: HookEvent): object {
@@ -570,23 +574,30 @@ const server = Bun.serve({
       })));
     }
 
-    // 创建新 pipeline
+    // 创建新 pipeline（支持按 template + change_name 自动生成 ID，幂等）
     if (url.pathname === "/api/v1/pipelines" && req.method === "POST") {
-      return req.json().then((body: { id: string; template: string }) => {
-        if (!body.id || !body.template) {
-          return Response.json({ error: "id and template are required" }, { status: 400 });
-        }
-        if (pipelines.has(body.id)) {
-          return Response.json({ error: `pipeline '${body.id}' already exists` }, { status: 409 });
+      return req.json().then((body: { id?: string; template: string; change_name?: string }) => {
+        if (!body.template) {
+          return Response.json({ error: "template is required" }, { status: 400 });
         }
         const tpl = findOrLoadTemplate(body.template);
         if (!tpl) {
           return Response.json({ error: `template '${body.template}' not found` }, { status: 404 });
         }
-        const inst = createPipeline(body.id, tpl);
-        broadcast("pipeline_created", { id: inst.id, template: tpl.name });
-        appendAudit("pipeline_created", "", inst.id, inst.id);
-        return Response.json({ status: "ok", id: inst.id, template: tpl.name });
+        const pipelineId = body.id ?? (body.change_name ? `${tpl.name}--${body.change_name}` : tpl.name);
+        const existing = loadPipeline(pipelineId);
+        if (existing) {
+          return Response.json({ status: "ok", id: existing.id, template: tpl.name, change_name: existing.state.change_name, resumed: true });
+        }
+        const inst = createPipeline(pipelineId, tpl);
+        if (body.change_name) {
+          inst.state.change_name = body.change_name;
+          inst.state.started_at = new Date().toISOString();
+          savePipelineState(inst);
+        }
+        broadcast("pipeline_created", { id: inst.id, template: tpl.name, change_name: body.change_name });
+        appendAudit("pipeline_created", "", `${inst.id} (change: ${body.change_name ?? ""})`, inst.id);
+        return Response.json({ status: "ok", id: inst.id, template: tpl.name, change_name: inst.state.change_name, resumed: false });
       }).catch(() => Response.json({ error: "invalid body" }, { status: 400 }));
     }
 
@@ -703,6 +714,17 @@ const server = Bun.serve({
         if (body.status === "active") {
           if (!s.started_at) s.started_at = now;
           inst.state.current_stage = body.stage;
+          // 兜底：将当前阶段之前所有仍为 active 的阶段自动标记为 completed
+          const idx = inst.state.stages.indexOf(s);
+          for (let i = 0; i < idx; i++) {
+            const prev = inst.state.stages[i];
+            if (prev.status === "active") {
+              prev.status = "completed";
+              prev.completed_at = now;
+              if (prev.started_at) prev.duration_ms = new Date(now).getTime() - new Date(prev.started_at).getTime();
+              appendAudit("stage_completed", "", prev.name + " (auto-closed)", inst.id);
+            }
+          }
         }
         if (body.status === "completed" || body.status === "failed") {
           s.completed_at = now;
@@ -736,6 +758,17 @@ const server = Bun.serve({
         if (stageDef) {
           stageDef.status = body.result === "passed" ? "completed" : "failed";
           stageDef.completed_at = now;
+          // 兜底：gate 通过时，将 gate 之前所有仍为 active 的阶段自动标记为 completed
+          const idx = inst.state.stages.indexOf(stageDef);
+          for (let i = 0; i < idx; i++) {
+            const prev = inst.state.stages[i];
+            if (prev.status === "active") {
+              prev.status = "completed";
+              prev.completed_at = now;
+              if (prev.started_at) prev.duration_ms = new Date(now).getTime() - new Date(prev.started_at).getTime();
+              appendAudit("stage_completed", "", prev.name + " (auto-closed)", inst.id);
+            }
+          }
         }
         savePipelineState(inst);
         broadcast("gate_decided", { pipeline_id: inst.id, gate: body.gate, result: body.result });

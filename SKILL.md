@@ -13,7 +13,7 @@ description: 编排已有 SubAgent 的开发流水线。通过 YAML 模板定义
 
 ### 步骤 0：探测已有 Agent
 
-扫描 `.cursor/agents/*.md`，排除 `orchestrator*.md`。
+扫描 `.cursor/agents/*.md`。
 
 - **没有 Agent** → 教学模式（见下方）
 - **有 Agent** → 展示列表，进入步骤 1
@@ -60,15 +60,15 @@ init.sh 执行的操作：
 1. 复制 hook 脚本 → `.cursor/hooks/`
 2. 复制 `hooks.json.tpl` → `.cursor/hooks.json`（如果不存在）
 3. 复制模板到 `.cursor/pipelines/`
-4. 运行 `generate-orchestrator.ts` 生成 `.cursor/agents/orchestrator-{pipeline-id}.md`
+4. 运行 `generate-orchestrator.ts` 生成 `.cursor/skills/orchestrator-{pipeline-id}/SKILL.md`
 5. 创建 pipeline state 文件 `.cursor/hooks/state/pipeline-{pipeline-id}.json`
 
 ### 步骤 4：验证和启动
 
-1. 检查文件完整性（`hooks.json`、`pipeline-server.ts`、`orchestrator-*.md`）
+1. 检查文件完整性（`hooks.json`、`pipeline-server.ts`、`orchestrator-*/SKILL.md`）
 2. 启动 pipeline-server：`bun run .cursor/hooks/pipeline-server.ts`
 3. 告知用户：看板 http://127.0.0.1:19090/（支持切换查看不同流水线）
-4. 使用 orchestrator 的触发词启动对应流水线
+4. 使用 orchestrator Skill 的触发词启动对应流水线
 
 ### 多流水线示例
 
@@ -83,8 +83,8 @@ bash <skill-dir>/scripts/init.sh -t go-backend-only -p bugfix
 ```
 
 生成的文件：
-- `.cursor/agents/orchestrator-feature.md` — 触发词"启动 feature"
-- `.cursor/agents/orchestrator-bugfix.md` — 触发词"启动 bugfix"
+- `.cursor/skills/orchestrator-feature/SKILL.md` — 触发词"启动 feature"
+- `.cursor/skills/orchestrator-bugfix/SKILL.md` — 触发词"启动 bugfix"
 - `.cursor/hooks/state/pipeline-feature.json` — feature 流水线状态
 - `.cursor/hooks/state/pipeline-bugfix.json` — bugfix 流水线状态
 
@@ -114,7 +114,7 @@ cursor-pipeline/
 ├── agents/openai.yaml              ← UI 元数据
 ├── scripts/
 │   ├── init.sh                     ← 初始化脚本（-t 模板 -p pipeline-id）
-│   ├── generate-orchestrator.ts    ← 从 YAML 生成 orchestrator-{id}.md
+│   ├── generate-orchestrator.ts    ← 从 YAML 生成 orchestrator-{id}/SKILL.md
 │   ├── pipeline-server.ts          ← 流水线服务（支持多 pipeline 并行）
 │   ├── yaml-parser.ts              ← 共享 YAML 解析模块
 │   ├── forward-hook.sh             ← Hook 事件转发

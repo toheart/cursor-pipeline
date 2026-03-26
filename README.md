@@ -2,7 +2,7 @@
 
 编排已有 SubAgent 的开发流水线。不创建 Agent，只编排。支持多流水线并行运行。
 
-通过 YAML 模板定义阶段顺序、Gate、并行策略，从模板确定性生成 `orchestrator-{id}.md`，提供 Hooks 集成和实时看板。
+通过 YAML 模板定义阶段顺序、Gate、并行策略，从模板确定性生成 orchestrator Skill（`orchestrator-{id}/SKILL.md`），提供 Hooks 集成和实时看板。
 
 ## 前置条件
 
@@ -37,7 +37,7 @@ bash init.sh -t go-react-fullstack -p feature-auth
 bash init.sh -t go-react-fullstack -p feature-payment
 ```
 
-每条流水线生成独立的 `orchestrator-{id}.md` 和 state 文件，互不干扰。
+每条流水线生成独立的 `orchestrator-{id}/SKILL.md` 和 state 文件，互不干扰。
 看板页面支持切换查看不同流水线的进度。
 
 ## 内置编排模板
@@ -57,7 +57,7 @@ explore → propose → review → [Gate] → implement(BE∥FE) → code-review
 ```
 
 - **YAML 模板**定义阶段顺序和 Agent 引用
-- **generate-orchestrator.ts** 从 YAML 确定性生成 `orchestrator-{id}.md`
+- **generate-orchestrator.ts** 从 YAML 确定性生成 `orchestrator-{id}/SKILL.md`
 - **Cursor Hooks** 自动捕获 SubAgent 启停事件，通过 `[pipeline:id]` 标记路由到对应流水线
 - **pipeline-server** 管理多个流水线实例，提供 REST API 和 WebSocket 实时看板
 
@@ -68,7 +68,7 @@ cursor-pipeline/                        # Skill 目录
 ├── SKILL.md
 ├── scripts/
 │   ├── init.sh                         ← -t <模板> -p <pipeline-id>
-│   ├── generate-orchestrator.ts        ← 生成 orchestrator-{id}.md
+│   ├── generate-orchestrator.ts        ← 生成 orchestrator-{id}/SKILL.md
 │   ├── pipeline-server.ts              ← 多流水线管理
 │   └── ...
 ├── templates/                          ← 内置编排模板
@@ -77,10 +77,12 @@ cursor-pipeline/                        # Skill 目录
 .cursor/                                # 用户项目目录（init.sh 生成）
 ├── pipelines/                          ← 编排模板副本
 │   └── go-react-fullstack.yaml
+├── skills/
+│   ├── orchestrator-feature/SKILL.md   ← 流水线 orchestrator（Skill 形态）
+│   └── orchestrator-bugfix/SKILL.md
 ├── agents/
-│   ├── orchestrator-feature.md         ← 流水线 orchestrator
-│   ├── orchestrator-bugfix.md
-│   ├── backend-implementer.md          ← 用户自定义 Agent
+│   ├── backend-implementer.md          ← 用户自定义 SubAgent
+│   ├── frontend-implementer.md
 │   └── ...
 └── hooks/
     ├── state/
