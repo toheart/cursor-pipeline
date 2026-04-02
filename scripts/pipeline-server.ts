@@ -88,6 +88,33 @@ const templatesDir = (cliArgs["templates-dir"] as string) ?? BUILTIN_TEMPLATES_D
 const PIPELINES_DIR = (cliArgs["pipelines-dir"] as string) ?? ".cursor/pipelines";
 mkdirSync(PIPELINES_DIR, { recursive: true });
 
+// ─── 多项目模板目录注册 ───
+// key = 项目标识（如 "mcd"、"kskillhub"），value = 绝对路径
+const registeredPipelineDirs = new Map<string, string>();
+const REGISTERED_DIRS_FILE = join(DATA_DIR, "registered-dirs.json");
+
+function loadRegisteredDirs() {
+  try {
+    const data = JSON.parse(readFileSync(REGISTERED_DIRS_FILE, "utf-8"));
+    for (const [k, v] of Object.entries(data)) {
+      if (typeof v === "string" && existsSync(v)) registeredPipelineDirs.set(k, v);
+    }
+  } catch {}
+}
+
+function saveRegisteredDirs() {
+  writeFileSync(REGISTERED_DIRS_FILE, JSON.stringify(Object.fromEntries(registeredPipelineDirs), null, 2));
+}
+
+function getAllPipelineDirs(): string[] {
+  const dirs = new Set<string>();
+  dirs.add(resolve(PIPELINES_DIR));
+  for (const d of registeredPipelineDirs.values()) dirs.add(d);
+  return [...dirs];
+}
+
+loadRegisteredDirs();
+
 // ─── 类型 ───
 interface Stage {
   name: string;
@@ -189,7 +216,8 @@ function savePipelineState(inst: PipelineInstance) {
 
 function findOrLoadTemplate(nameOrPath: string): TemplateConfig | null {
   if (existsSync(nameOrPath)) return loadTemplate(nameOrPath);
-  for (const dir of [PIPELINES_DIR, templatesDir]) {
+  const searchDirs = [templatesDir, ...getAllPipelineDirs()];
+  for (const dir of searchDirs) {
     for (const ext of ["yaml", "yml"]) {
       const fp = join(dir, `${nameOrPath}.${ext}`);
       if (existsSync(fp)) return loadTemplate(fp);
@@ -400,8 +428,18 @@ function handleHookEvent(event: HookEvent): object {
       }
       const explorer = readExplorerConclusion();
       if (explorer) ctx.push(`[Explorer 结论] ${explorer}`);
-      const tplNames = all.map(p => p.template.name);
-      if (tplNames.length) ctx.push(`[已注册模板] ${tplNames.join(", ")}`);
+      // 列出所有可用模板（来自已注册目录 + 内置）
+      const availableTemplates = new Set<string>();
+      for (const dir of [templatesDir, ...getAllPipelineDirs()]) {
+        for (const f of listTemplateFiles(dir)) {
+          try { availableTemplates.add(loadTemplate(join(dir, f)).name); } catch {}
+        }
+      }
+      if (availableTemplates.size > 0) ctx.push(`[可用模板] ${[...availableTemplates].join(", ")}`);
+      // 列出已注册的项目目录
+      if (registeredPipelineDirs.size > 0) {
+        ctx.push(`[已注册项目] ${[...registeredPipelineDirs.entries()].map(([k, v]) => `${k}:${v}`).join(", ")}`);
+      }
       appendAudit(event.hook_event_name ?? "unknown", event.subagent_type);
       return {
         additional_context: ctx.join(" "),
@@ -641,22 +679,69 @@ const server = Bun.serve({
     }
 
     if (url.pathname === "/api/v1/pipeline/templates" && req.method === "GET") {
-      const builtIn = listTemplateFiles(templatesDir);
-      const project = listTemplateFiles(PIPELINES_DIR);
-      const all = new Map<string, { name: string; description: string; file: string; source: string }>();
-      for (const f of builtIn) {
+      const all = new Map<string, { name: string; description: string; file: string; source: string; dir: string }>();
+      // 内置模板
+      for (const f of listTemplateFiles(templatesDir)) {
         try {
           const t = loadTemplate(join(templatesDir, f));
-          all.set(t.name, { name: t.name, description: t.description, file: f, source: "builtin" });
-        } catch { all.set(f, { name: f, description: "", file: f, source: "builtin" }); }
+          all.set(t.name, { name: t.name, description: t.description, file: f, source: "builtin", dir: templatesDir });
+        } catch { all.set(f, { name: f, description: "", file: f, source: "builtin", dir: templatesDir }); }
       }
-      for (const f of project) {
-        try {
-          const t = loadTemplate(join(PIPELINES_DIR, f));
-          all.set(t.name, { name: t.name, description: t.description, file: f, source: "project" });
-        } catch { all.set(f, { name: f, description: "", file: f, source: "project" }); }
+      // 所有已注册的项目模板目录
+      for (const pDir of getAllPipelineDirs()) {
+        const projectName = [...registeredPipelineDirs.entries()].find(([, v]) => v === pDir)?.[0] ?? "local";
+        for (const f of listTemplateFiles(pDir)) {
+          try {
+            const t = loadTemplate(join(pDir, f));
+            if (!all.has(t.name)) {
+              all.set(t.name, { name: t.name, description: t.description, file: f, source: `project:${projectName}`, dir: pDir });
+            }
+          } catch {}
+        }
       }
       return Response.json([...all.values()]);
+    }
+
+    // 注册项目模板目录
+    if (url.pathname === "/api/v1/templates/register" && req.method === "POST") {
+      return req.json().then((body: { project: string; dir: string }) => {
+        if (!body.project || !body.dir) {
+          return Response.json({ error: "project and dir are required" }, { status: 400 });
+        }
+        const absDir = resolve(body.dir);
+        if (!existsSync(absDir)) {
+          return Response.json({ error: `directory not found: ${absDir}` }, { status: 404 });
+        }
+        const templates = listTemplateFiles(absDir);
+        registeredPipelineDirs.set(body.project, absDir);
+        saveRegisteredDirs();
+        appendAudit("templates_registered", "", `${body.project} → ${absDir} (${templates.length} templates)`, "");
+        return Response.json({
+          status: "ok",
+          project: body.project,
+          dir: absDir,
+          templates: templates.map(f => {
+            try { return loadTemplate(join(absDir, f)).name; } catch { return f; }
+          }),
+        });
+      }).catch(() => Response.json({ error: "invalid body" }, { status: 400 }));
+    }
+
+    // 注销项目模板目录
+    if (url.pathname === "/api/v1/templates/unregister" && req.method === "POST") {
+      return req.json().then((body: { project: string }) => {
+        if (!body.project) {
+          return Response.json({ error: "project is required" }, { status: 400 });
+        }
+        const removed = registeredPipelineDirs.delete(body.project);
+        if (removed) saveRegisteredDirs();
+        return Response.json({ status: "ok", project: body.project, removed });
+      }).catch(() => Response.json({ error: "invalid body" }, { status: 400 }));
+    }
+
+    // 列出已注册的模板目录
+    if (url.pathname === "/api/v1/templates/registered" && req.method === "GET") {
+      return Response.json(Object.fromEntries(registeredPipelineDirs));
     }
 
     if (url.pathname === "/api/v1/pipeline/audit" && req.method === "GET") {
@@ -790,5 +875,6 @@ const server = Bun.serve({
 console.log(`Pipeline server: http://127.0.0.1:${PORT}/`);
 console.log(`Templates dir:   ${templatesDir}`);
 console.log(`Pipelines dir:   ${PIPELINES_DIR}`);
+console.log(`Registered dirs: ${registeredPipelineDirs.size > 0 ? [...registeredPipelineDirs.entries()].map(([k, v]) => `${k}→${v}`).join(", ") : "(none)"}`);
 console.log(`Pipelines:       ${listPipelines().map(p => p.id).join(", ") || "(none)"}`);
 console.log(`Hook endpoint:   http://127.0.0.1:${PORT}/api/v1/pipeline/hook`);

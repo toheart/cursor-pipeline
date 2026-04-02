@@ -6,7 +6,7 @@
  */
 
 export function parseYaml(text: string): any {
-  const lines = text.split("\n");
+  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
   return parseYamlLines(lines, 0, 0).value;
 }
 

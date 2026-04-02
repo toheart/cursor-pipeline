@@ -1,6 +1,11 @@
 {
   "version": 1,
   "hooks": {
+    "sessionStart": [
+      {
+        "command": "bash .cursor/hooks/forward-hook.sh"
+      }
+    ],
     "afterFileEdit": [
       {
         "command": "bash .cursor/hooks/auto-format.sh",
